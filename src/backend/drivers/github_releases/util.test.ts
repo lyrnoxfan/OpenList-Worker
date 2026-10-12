@@ -15,11 +15,12 @@ function proxyOf(additionGhProxy: string | undefined, url: string): string {
   return (client as unknown as { proxy: (u: string) => string }).proxy(url)
 }
 
-test("gh_proxy 已配置时为 http(s) 下载链接加代理前缀", () => {
+test("gh_proxy 已配置时替换 https://github.com 前缀（对齐 Go Link 语义）", () => {
   const url = "https://github.com/example/repo/releases/download/v1.0.0/app.zip"
   assert.equal(
     proxyOf("https://mirror.example.com", url),
-    "https://mirror.example.com" + url,
+    // Go: strings.Replace(url, "https://github.com", gh_proxy, 1)
+    "https://mirror.example.com" + "/example/repo/releases/download/v1.0.0/app.zip",
   )
 })
 
