@@ -23,7 +23,7 @@
 
 [上游项目](https://github.com/OpenListTeam/OpenList) · [贡献指南](https://github.com/OpenListTeam/OpenList-Worker/blob/main/CONTRIBUTING.md) · [行为准则](https://github.com/OpenListTeam/OpenList-Worker/blob/main/CODE_OF_CONDUCT.md) · [许可证](./LICENSE)
 
-[🌎 全球 Demo](https://new.oplist.org) 　|　 [🇨🇳 中国 Demo](https://new.oplist.org.cn)
+[🌎 全球](https://new.oplist.org) 　|　 [🇨🇳 中国 Demo](https://new.oplist.org.cn)
 
 </div>
 
