@@ -96,7 +96,8 @@
     // ── 可选参数 ──────────────────────────────────────────────────────────
     //
     // 单次整体上传（/put、/form）大小上限，单位字节。默认 26214400（25MB）
-    // "MAX_UPLOAD": "26214400",
+    // 与线上现有值保持一致（1TB）
+    "MAX_UPLOAD": "1099511627776",
     //
     // 分片上传单片大小上限，单位字节。默认 16777216（16MB）
     // "MAX_UPPART": "16777216",
@@ -161,9 +162,9 @@
   //   控制台：Workers & Pages → D1 → 创建数据库 → 绑定到 Worker，变量名填 DB
   //   省略 database_id 时，wrangler >= 4.45.0 会自动创建同名库并回写
   //
-  // "d1_databases": [
-  //   { "binding": "DB", "database_name": "openlist", "database_id": "" }
-  // ],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "openlist", "database_id": "8bb17f9f-b6b1-422e-af02-94fa0ac5261c" }
+  ],
   //
   // ▶ 方案 C：Durable Objects（内置 SQLite，强一致；DB_FORMAT 建议改为 "sql"）
   //   注意：DO 需要 migrations，且删除成本高，适合单租户部署。
