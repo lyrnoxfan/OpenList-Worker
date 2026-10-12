@@ -818,6 +818,7 @@ export const defaultDb = {
 }
 
 let memoryDb: any = null
+let dbCacheVersion = 0
 let globalEnvCtx: any = null
 
 /**
@@ -1067,8 +1068,17 @@ const ensureDefaultMetas = (db: any) => {
  * but touches all ~83 call sites.
  */
 const DB_CACHE_TTL_MS = 1000
-const dbCache = new WeakMap<object, { ts: number; db: any }>()
+const dbCache = new WeakMap<object, { ts: number; version: number; db: any }>()
 const dbInflight = new WeakMap<object, Promise<any>>()
+/**
+ * DB 缓存版本号：每次 saveDb 成功写入后 +1。
+ *
+ * 为什么需要它：dbCache 是 WeakMap（无法遍历/清空），且以调用方传入的 envCtx
+ * 对象为键。一次写入只会刷新「本次调用的 env 键」，其他 env 键缓存的旧快照在
+ * TTL 内依然会被命中 —— 跨 env 读取会拿到写前的数据（实测：一次改密码写入后，
+ * 用另一个 env 对象 getDb 仍读到旧密码哈希）。版本号让所有键的旧快照一次性
+ * 失效：命中缓存时必须版本号一致，否则重新 load。
+ */
 
 /**
  * 存储后端解析入口。默认直接委托给 store/backend 的 getStoreBackend；
@@ -1094,6 +1104,7 @@ export const __resetDbCacheForTest = () => {
   }
   globalEnvCtx = null
   memoryDb = null
+  dbCacheVersion = 0
   storeBackendLoader = (env: any) => getStoreBackend(env)
   // 写前守卫状态复位（否则跨用例串味）
   dbTrusted = false
@@ -1236,12 +1247,22 @@ export const getDb = async (envCtx?: any) => {
   if (pending) return pending
 
   // 2) Short-TTL memoization: sequential calls in one request reuse the result.
+  // version 必须与当前一致：期间若发生过 saveDb（版本号+1），旧快照一律失效，
+  // 避免跨 env 键读到写前数据。
   const hit = dbCache.get(cacheKey)
-  if (hit && Date.now() - hit.ts < DB_CACHE_TTL_MS) return hit.db
+  if (
+    hit &&
+    hit.version === dbCacheVersion &&
+    Date.now() - hit.ts < DB_CACHE_TTL_MS
+  )
+    return hit.db
 
+  // 记录 load 开始时的版本号：若 load 过程中发生写入，回来时存入的旧数据
+  // 会因版本号对不上而被直接丢弃，不会污染缓存。
+  const loadVersion = dbCacheVersion
   const promise = loadDb(envCtx)
     .then((db) => {
-      dbCache.set(cacheKey, { ts: Date.now(), db })
+      dbCache.set(cacheKey, { ts: Date.now(), version: loadVersion, db })
       return db
     })
     .finally(() => {
@@ -1746,8 +1767,14 @@ export const saveDb = async (
   // the write rather than a pre-write snapshot.
   // 无参调用会以 globalEnvCtx 为键命中缓存，因此这里也同步刷新该键，
   // 否则「写后读」在无参路径上可能读到 TTL 内的旧快照。
+  //
+  // 另外版本号 +1：dbCache 以 env 对象为键且是 WeakMap（无法遍历清空），
+  // 只刷新当前键会让其他 env 键的旧快照在 TTL 内继续被命中。版本号+1 后
+  // 所有旧快照一次性失效，各键下次命中时都会重新 load。
+  dbCacheVersion++
   const cacheKey = envCtx || resolveNoArgKey()
-  if (cacheKey) dbCache.set(cacheKey, { ts: Date.now(), db: data })
+  if (cacheKey)
+    dbCache.set(cacheKey, { ts: Date.now(), version: dbCacheVersion, db: data })
 
   // `activeEnv` 已在本函数开头解析（写前守卫也依赖它），这里只需通过可注入的
   // storeBackendLoader 取后端，便于测试统计 load/save 次数。

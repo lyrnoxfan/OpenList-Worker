@@ -102,8 +102,10 @@ export class DriverDoubao implements StorageDriver {
     physicalPath: string,
     newName: string,
   ): Promise<void> {
-    const nodeId = await this.resolveDirId(physicalPath)
-    await this.client.rename(nodeId, newName)
+    // physicalPath 指向被重命名的条目本身（文件或目录），resolveDirId 只认目录，
+    // 文件会直接抛 "Directory 'xxx' not found"，必须用 resolveEntry 拿 id
+    const entry = await this.resolveEntry(physicalPath)
+    await this.client.rename(entry.id, newName)
     this.pathCache.clear()
   }
 
@@ -112,20 +114,26 @@ export class DriverDoubao implements StorageDriver {
     physicalPath: string,
     _names: string[],
   ): Promise<void> {
-    const nodeId = await this.resolveDirId(physicalPath)
-    await this.client.remove(nodeId)
+    // 同 rename：被删的可能是文件，resolveDirId 会误判
+    const entry = await this.resolveEntry(physicalPath)
+    await this.client.remove(entry.id)
     this.pathCache.clear()
   }
 
   async move(
     _srcDir: string,
-    dstDir: string,
+    _dstDir: string,
     _names: string[],
     srcPhysical: string,
-    _dstPhysical: string,
+    dstPhysical: string,
   ): Promise<void> {
+    // dstDir 是虚拟路径（含挂载前缀），resolveDirId 期望的是物理路径；
+    // 用 dstPhysical 的父目录解析目标目录 id
     const entry = await this.resolveEntry(srcPhysical)
-    const dstId = await this.resolveDirId(dstDir)
+    const dstParts = dstPhysical.split("/").filter(Boolean)
+    dstParts.pop()
+    const dstParentPath = "/" + dstParts.join("/")
+    const dstId = await this.resolveDirId(dstParentPath)
     await this.client.move(entry.id, entry.parentId, dstId)
     this.pathCache.clear()
   }
@@ -146,12 +154,18 @@ export class DriverDoubao implements StorageDriver {
     const parts = clean.split("/")
     let currentId = DEFAULT_ROOT
     for (let i = 0; i < parts.length; i++) {
+      // 缓存键统一用无前导斜杠的相对路径（与开头的 has(clean) 一致，
+      // 之前 set 时带了 "/" 前缀导致缓存永远命中不了）
+      const key = parts.slice(0, i + 1).join("/")
+      if (this.pathCache.has(key)) {
+        currentId = this.pathCache.get(key)!
+        continue
+      }
       const files = await this.client.getFiles(currentId)
       const target = files.find((f) => f.node_type === 1 && f.name === parts[i])
       if (!target) throw new Error(`[Doubao] Directory '${parts[i]}' not found`)
       currentId = target.id
-      const subPath = "/" + parts.slice(0, i + 1).join("/")
-      this.pathCache.set(subPath, currentId)
+      this.pathCache.set(key, currentId)
     }
     return currentId
   }

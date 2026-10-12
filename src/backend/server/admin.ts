@@ -146,6 +146,7 @@ export const normalizeDriver = (driverName: string): string => {
   if (norm === "wopan" || norm.includes("unicom") || norm.includes("woyun"))
     return "WoPan"
   if (norm === "quark" || norm === "quarkuc" || norm === "uc") return "Quark"
+  if (norm.includes("doubao")) return "Doubao"
   if (
     [
       "s3",
@@ -527,6 +528,7 @@ adminRouter.get("/driver/names", (c) => {
       "GuangYaPan",
       "AutoIndex",
       "ProtonDrive",
+      "Doubao",
     ],
   })
 })
@@ -4239,6 +4241,39 @@ const driverConfigs: Record<string, any> = {
       no_upload: true,
       need_ms: false,
       default_root: "root",
+    },
+  },
+  Doubao: {
+    name: "Doubao",
+    default_mount_path: "/doubao",
+    common: COMMON_FIELDS,
+    additional: [
+      {
+        name: "cookie",
+        type: "text",
+        default: "",
+        required: true,
+        help: "豆包网页端 Cookie（www.doubao.com 登录后复制）",
+      },
+      {
+        name: "download_api",
+        type: "select",
+        options: "get_file_url,get_download_info",
+        default: "get_file_url",
+        required: false,
+        help: "下载直链接口，默认 get_file_url",
+      },
+    ],
+    config: {
+      name: "Doubao",
+      local_sort: true,
+      only_local: false,
+      only_proxy: false,
+      no_cache: false,
+      // 驱动的 put() 直接抛错（无状态环境不支持上传），UI 侧隐藏上传入口
+      no_upload: true,
+      need_ms: false,
+      default_root: "0",
     },
   },
 }

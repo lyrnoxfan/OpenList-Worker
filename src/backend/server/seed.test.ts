@@ -86,7 +86,9 @@ test("CAS codec matches casmeta base64 JSON field names", async () => {
   const payload = JSON.parse(Buffer.from(Buffer.from(bytes).toString(), "base64").toString("utf8"))
   assert.deepEqual(
     Object.keys(payload).sort(),
-    ["create_time", "md5", "name", "size", "sliceMd5"].sort(),
+    // feat(seed) #43 起 CAS 携带 cloud（多网盘秒传目标），#3e8558a 起保留
+    // slice_md5s / slice_size（分片 MD5 列表）；测试按实现同步更新
+    ["cloud", "create_time", "md5", "name", "size", "sliceMd5", "slice_md5s", "slice_size"].sort(),
   )
   const parsed = await parseSeed(bytes, "cas")
   assert.equal(parsed.cas?.name, "hello.txt")

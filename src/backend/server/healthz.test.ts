@@ -63,7 +63,7 @@ test("Observability: /api/healthz returns 503 on serverless without storage", as
   // Serverless / Worker runtimes (multi-instance, short-lived) must never
   // silently fall back to memory: writes would vanish while the UI reports
   // success. Such a deployment is unhealthy until storage is configured.
-  const env: any = { __requestOrigin: "https://example.edgeone.cool" }
+  const env: any = { __requestOrigin: "https://unroutable.invalid" }
   const res = await buildApp().request("/api/healthz", { method: "GET" }, env)
   assert.equal(
     res.status,
@@ -93,7 +93,7 @@ test("Observability: /api/health is left untouched as a liveness-only marker", a
 test("Env check: reports config, storage, jwt and blocks unready envs", async () => {
   // 1) Serverless without storage and without JWT_SECRET must be reported as
   //    not ready, with actionable issues carrying doc links.
-  const bad: any = { __requestOrigin: "https://example.edgeone.cool" }
+  const bad: any = { __requestOrigin: "https://unroutable.invalid" }
   const resBad = await buildApp().request(
     "/api/public/env_check",
     { method: "GET" },
@@ -148,9 +148,12 @@ test("Env check: reports config, storage, jwt and blocks unready envs", async ()
 
 test("Env check: serverless with JWT_SECRET but no storage is still not ready", async () => {
   // Guards the dangerous case: key is fine but writes would vanish.
+  // NOTE: origin 必须用 .invalid 保留域名（RFC 2606，保证永不解析）。
+  // 曾用 https://example.edgeone.cool，它是真实存在的域名且对任意路径返回
+  // 200，导致 KV 代理探测误判为可用、测试在任何有公网的环境下都会失败。
   const env: any = {
     JWT_SECRET: "0123456789abcdef0123456789abcdef",
-    __requestOrigin: "https://example.edgeone.cool",
+    __requestOrigin: "https://unroutable.invalid",
   }
   const res = await buildApp().request(
     "/api/public/env_check",

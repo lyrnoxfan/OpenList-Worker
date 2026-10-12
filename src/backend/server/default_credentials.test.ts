@@ -14,7 +14,9 @@ const env: any = {}
 const ADMIN_TOKEN = "ADMIN_STATIC_TOKEN"
 
 const seed = (users: any[], settings: any[] = []) =>
-  saveDb({ settings, users, storages: [], shares: [] }, env)
+  // force: true —— 测试需要显式构造「空壳库」（如 users 为空的全新部署态），
+  // 而 saveDb 的写前守卫默认拒绝落盘空壳；这里是知情调用，用 force 绕过守卫。
+  saveDb({ settings, users, storages: [], shares: [] }, env, { force: true })
 
 const adminUser = (password: string) => ({
   id: 1,
