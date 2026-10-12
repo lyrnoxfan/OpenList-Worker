@@ -12,8 +12,7 @@ import {
 } from "../internal/op/storage"
 import { buildWebDavPropfindResponse } from "../internal/webdav/webdav"
 import { safeErrorMessage } from "../pkg/errs"
-import { getSettings, resolvePath } from "../internal/model/db"
-import { canUseProxyEndpoint, normalizeExtList } from "../internal/driver/proxy"
+import { encodeDownloadPath } from "../pkg/path"
 
 /**
  * WebDAV 协议服务（挂载于 /dav/*）。
@@ -72,11 +71,32 @@ async function webdavAuth(c: any): Promise<any> {
   return null
 }
 
-/** 从 URL pathname 中剥离 /dav 前缀，得到虚拟文件路径 */
+/** WebDAV 挂载前缀。必须与 index.ts 里 `app.route("/dav", webdavRouter)` 一致。 */
+const DAV_MOUNT = "/dav"
+
+/**
+ * 取请求路径（已百分号编码），作为 href 的基准。
+ *
+ * RFC 4918 §8.3：href 要么是相对引用（客户端按 Request-URI 解析），要么是完整
+ * URI；§8.3.1 的示例里两者都合法。用相对引用时 href 必须与 Request-URI 前缀
+ * 一致，因此基准取真实请求路径而非硬编码的挂载前缀 —— 挂在子路径下
+ * （/list/dav）时也自动正确，且不回显 Host 头。
+ */
+function davRequestPath(c: any): string {
+  return new URL(c.req.url).pathname
+}
+
+/** 从 URL pathname 中剥离挂载前缀，得到虚拟文件路径（仅用于存储层寻址） */
 function davPathOf(c: any): string {
-  const pathname = new URL(c.req.url).pathname
-  let p = pathname.replace(/^\/dav/, "")
+  const pathname = davRequestPath(c)
+  let p = pathname
+  // 只在前缀真正匹配时才剥离：不能像 slice(DAV_MOUNT.length) 那样无条件截断，
+  // 否则挂在子路径下会把 /list/dav/x 截成 /t/dav/x。
+  if (p === DAV_MOUNT || p.startsWith(DAV_MOUNT + "/")) {
+    p = p.slice(DAV_MOUNT.length)
+  }
   if (!p) p = "/"
+  if (!p.startsWith("/")) p = "/" + p
   try {
     return decodeURIComponent(p)
   } catch {
@@ -91,6 +111,21 @@ function splitPath(p: string): { dir: string; name: string } {
   const name = parts.pop() || ""
   const dir = "/" + parts.join("/")
   return { dir, name }
+}
+
+/**
+ * 推导本次请求实际使用的挂载前缀（正规挂载为 `/dav`）。
+ *
+ * 不能直接硬编码 `/dav`：index.ts 会把**任意路径上**的 WebDAV 方法都交给本 router
+ * （为兼容把用户填写的地址当 WebDAV 根、对 `/` 发 PROPFIND 的客户端），此时前缀为空。
+ * PROPFIND 返回的 href 必须与本请求的 URL 结构一致，客户端才能匹配上。
+ */
+function davPrefixOf(c: any, davPath: string): string {
+  const pathname = new URL(c.req.url).pathname
+  const stripped = davPath === "/" ? "" : davPath
+  return pathname.endsWith(stripped)
+    ? pathname.slice(0, pathname.length - stripped.length)
+    : ""
 }
 
 webdavRouter.all("/*", async (c) => {
@@ -132,13 +167,10 @@ webdavRouter.all("/*", async (c) => {
           isFolder: !!it.is_dir,
           modified: it.modified || new Date().toISOString(),
         }))
-        const href =
-          davPath === "/"
-            ? "/"
-            : davPath.endsWith("/")
-              ? davPath
-              : davPath + "/"
-        const xml = buildWebDavPropfindResponse(href, items)
+        // davPathOf 已剥掉挂载前缀，那是给存储层寻址用的；href 必须反映真实请求
+        // 路径。少了挂载前缀，rclone / Windows 资源管理器会因「返回的 href 与请求
+        // 路径对不上」丢弃全部记录（能下载但列不出目录）。见 Issue #104。
+        const xml = buildWebDavPropfindResponse(davRequestPath(c), items)
         return c.body(xml, depth === "0" ? 207 : 207, {
           "Content-Type": "application/xml; charset=utf-8",
         })
@@ -153,32 +185,11 @@ webdavRouter.all("/*", async (c) => {
         // 重定向到 rawRouter 实际下载；rawRouter 已处理所有驱动的下载协议
         // （proxy/redirect/stream + Range + SSRF 防护）。
         //
-        // 走 /p 还是 /d 取决于存储的代理策略：/p 是受限的公开代理端点
-        // （对齐 Go handles.canProxy()，未开启代理的存储会 403），而 WebDAV 协议
-        // 拉流必须能拿到字节——不能拿直链的存储（如 WebDav 自身）才需要 /p。
-        // 因此这里按同一个判据选择端点，避免 WebDAV 客户端读到 403。
-        let prefix = "/api/p"
-        try {
-          const resolved: any = await resolvePath(davPath)
-          const storage = resolved?.storage
-          if (storage) {
-            const settings: Record<string, any> = await getSettings().catch(
-              () => ({}) as Record<string, any>,
-            )
-            const allowProxy = canUseProxyEndpoint({
-              storage,
-              driver: storage.driver,
-              filename: davPath,
-              proxyTypes: normalizeExtList(settings.proxy_types),
-              textTypes: normalizeExtList(settings.text_types),
-            })
-            if (!allowProxy) prefix = "/api/d"
-          }
-        } catch {
-          // 解析失败时保持默认 /p，交由 rawRouter 给出最终结论
-        }
+        // 端点前缀（/p 还是 /d）与路径编码都由 getItem 决定（见
+        // op/storage.ts resolveRawUrlPrefix）：/p 受 Go canProxy() 限制，未开启
+        // 代理的存储会 403 proxy not allowed，因此不能在这里硬编码 /p。
         return c.redirect(
-          rawUrl || `${prefix}${davPath.startsWith("/") ? "" : "/"}${davPath}`,
+          rawUrl || `/api/d${encodeDownloadPath(davPath)}`,
           302,
         )
       }
@@ -208,9 +219,13 @@ webdavRouter.all("/*", async (c) => {
         const destRaw = c.req.header("Destination") || ""
         let dest = destRaw
         try {
-          dest = decodeURIComponent(
-            new URL(destRaw, c.req.url).pathname,
-          ).replace(/^\/dav/, "")
+          // 与 davPathOf 同样的前缀守卫：Destination 未挂载在 DAV_MOUNT 下时
+          // 原样保留，不做无意义的前缀改写
+          dest = decodeURIComponent(new URL(destRaw, c.req.url).pathname)
+          if (dest === DAV_MOUNT || dest.startsWith(DAV_MOUNT + "/")) {
+            dest = dest.slice(DAV_MOUNT.length) || "/"
+          }
+          if (!dest.startsWith("/")) dest = "/" + dest
         } catch {}
         const src = splitPath(davPath)
         const dst = splitPath(dest)
@@ -223,9 +238,13 @@ webdavRouter.all("/*", async (c) => {
         const destRaw = c.req.header("Destination") || ""
         let dest = destRaw
         try {
-          dest = decodeURIComponent(
-            new URL(destRaw, c.req.url).pathname,
-          ).replace(/^\/dav/, "")
+          // 与 davPathOf 同样的前缀守卫：Destination 未挂载在 DAV_MOUNT 下时
+          // 原样保留，不做无意义的前缀改写
+          dest = decodeURIComponent(new URL(destRaw, c.req.url).pathname)
+          if (dest === DAV_MOUNT || dest.startsWith(DAV_MOUNT + "/")) {
+            dest = dest.slice(DAV_MOUNT.length) || "/"
+          }
+          if (!dest.startsWith("/")) dest = "/" + dest
         } catch {}
         const src = splitPath(davPath)
         const dst = splitPath(dest)

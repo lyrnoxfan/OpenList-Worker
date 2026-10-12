@@ -14,8 +14,6 @@ const env: any = {}
 const ADMIN_TOKEN = "ADMIN_STATIC_TOKEN"
 
 const seed = (users: any[], settings: any[] = []) =>
-  // force: true —— 测试需要显式构造「空壳库」（如 users 为空的全新部署态），
-  // 而 saveDb 的写前守卫默认拒绝落盘空壳；这里是知情调用，用 force 绕过守卫。
   saveDb({ settings, users, storages: [], shares: [] }, env, { force: true })
 
 const adminUser = (password: string) => ({
@@ -28,8 +26,8 @@ const adminUser = (password: string) => ({
   disabled: false,
 })
 
-const currentAdmin = async () => {
-  const db: any = await getDb(env)
+const currentAdmin = async (context = env) => {
+  const db: any = await getDb(context)
   return db.users.find((u: any) => u.username === "admin")
 }
 
@@ -82,7 +80,7 @@ test("Security(F-11): ADMIN_PASS still forces an explicit reset (to salted doubl
   await seed([adminUser("pbkdf2:100000:somesalt:deadbeef")])
   const envWithPass: any = { ...env, ADMIN_PASS: "operator-chosen" }
   await getOrInitUsers(envWithPass)
-  const admin = await currentAdmin()
+  const admin = await currentAdmin(envWithPass)
   assert.ok(isHex64(admin.password), "reset must store a 64-hex SHA-256 value")
   assert.ok(admin.salt, "reset must assign a per-user salt (Go two-step hash)")
   assert.equal(

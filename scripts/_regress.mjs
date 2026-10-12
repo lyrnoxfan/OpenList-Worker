@@ -170,14 +170,12 @@ try {
   check("代理 save/load 正常", ld?.users?.[0]?.username === "admin")
 
   console.log("=== H. 配置错误透出 ===")
-  // getStoreConfigError() 已被删除（见 backend.ts 注释），改用
-  // getStoreConfigErrorDetail()（返回 {code, message, suggestion}）
-  const ce1 = await backendMod.getStoreConfigErrorDetail({ __requestOrigin: origin }, { silent: true })
-  check("worker 无存储错误", typeof ce1.message === "string" && ce1.message.includes("No storage backend"))
-  const ce2 = await backendMod.getStoreConfigErrorDetail({ DB_DRIVER: "kv", KV: respClient }, { silent: true })
-  check("KV 缺密钥错误（精确）", typeof ce2.message === "string" && ce2.message.includes("JWT_SECRET"), String(ce2.message).slice(0, 50))
-  const ce3 = await backendMod.getStoreConfigErrorDetail({ DB_DRIVER: "kv", KV: respClient, JWT_SECRET, __requestOrigin: origin }, { silent: true })
-  check("配置完整 → message 为 null", ce3.message === null)
+  const ce1 = (await backendMod.getStoreConfigErrorDetail({ __requestOrigin: origin })).message
+  check("worker 无存储错误", typeof ce1 === "string" && ce1.includes("No storage backend"))
+  const ce2 = (await backendMod.getStoreConfigErrorDetail({ DB_DRIVER: "kv", KV: respClient })).message
+  check("KV 缺密钥错误（精确）", typeof ce2 === "string" && ce2.includes("JWT_SECRET"), String(ce2).slice(0, 50))
+  const ce3 = (await backendMod.getStoreConfigErrorDetail({ DB_DRIVER: "kv", KV: respClient, JWT_SECRET, __requestOrigin: origin })).message
+  check("配置完整 → null", ce3 === null)
 
   console.log("=== I. 绑定形态 ===")
   check("RESP 不算 binding", kvDrv.checkProxyConfig({ DB_DRIVER: "kv", KV: respClient }) !== null)
